@@ -113,6 +113,7 @@ router.get("/me", requireAuth, async (req: AuthRequest, res) => {
  */
 router.post(
   "/",
+  requireAuth, // for simplicity, require auth; to support guest, remove and handle token below
   body("product_id").isInt({ min: 1 }),
   body("quantity").optional().isInt({ min: 1 }),
   async (req: express.Request, res) => {

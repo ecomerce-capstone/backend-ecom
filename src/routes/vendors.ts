@@ -13,7 +13,76 @@ import {
   mapValidationErrors,
 } from "../lib/response";
 
+// import at top of vendors.ts
+import { multerHandler } from "../middleware/uploadCloudinary";
+import {
+  uploadBufferToCloudinary,
+  deleteFromCloudinary,
+} from "../lib/cloudinary";
+
 const router = express.Router();
+
+// --- new route: POST /vendors/:id/upload-image
+router.post(
+  "/:id/upload-image",
+  requireAuth,
+  requireRole("vendor"),
+  multerHandler,
+  async (req: AuthRequest, res) => {
+    try {
+      const vendorUser = req.user;
+      const id = Number(req.params.id);
+      if (!vendorUser)
+        return errorResponse(res, 401, "Unauthorized", [
+          { message: "Unauthorized" },
+        ]);
+      if (vendorUser.id !== id)
+        return errorResponse(res, 403, "Forbidden: not owner", [
+          { message: "Not owner" },
+        ]);
+
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file || !file.buffer) {
+        return errorResponse(res, 400, "No file uploaded", [
+          { message: "No file uploaded" },
+        ]);
+      }
+
+      // upload to Cloudinary (folder products or vendors)
+      const result = await uploadBufferToCloudinary(file.buffer, {
+        folder: process.env.CLOUDINARY_UPLOAD_FOLDER
+          ? `${process.env.CLOUDINARY_UPLOAD_FOLDER}/vendors`
+          : "vendors",
+        public_id: `vendor_${id}_image_${Date.now()}`,
+      });
+
+      // optional: delete old image if you store public_id
+      const [vRows]: any = await pool.query(
+        "SELECT store_image_url FROM vendors WHERE id = ? LIMIT 1",
+        [id]
+      );
+      // if you store public_id, call deleteFromCloudinary(old_public_id);
+
+      // update DB
+      await pool.query(
+        "UPDATE vendors SET store_image_url = ?, updated_at = NOW() WHERE id = ?",
+        [result.secure_url || result.url, id]
+      );
+
+      return success(
+        res,
+        { url: result.secure_url || result.url, public_id: result.public_id },
+        "Vendor image uploaded",
+        201
+      );
+    } catch (err) {
+      console.error("POST /vendors/:id/upload-image error", err);
+      return errorResponse(res, 500, "Upload failed", [
+        { message: "Upload failed" },
+      ]);
+    }
+  }
+);
 
 /*
 GET /vendors

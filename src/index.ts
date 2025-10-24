@@ -9,6 +9,7 @@ import ordersRouter from "./routes/orders";
 import paymentsRouter from "./routes/payments";
 import bannersRouter from "./routes/banners";
 import recomonddationRoutes from "./routes/recommendations";
+import cartRoutes from "./routes/cart";
 
 dotenv.config();
 const app = express();
@@ -23,6 +24,7 @@ app.use("/orders", ordersRouter);
 app.use("/", paymentsRouter);
 app.use("/banners", bannersRouter);
 app.use("/recommendations", recomonddationRoutes);
+app.use("/cart", cartRoutes);
 
 //health check
 app.get("/", (req, res) =>
