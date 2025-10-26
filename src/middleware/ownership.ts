@@ -1,46 +1,58 @@
-// src/middleware/ownership.ts
-import { Request, Response, NextFunction } from "express";
-import { pool } from "../lib/db";
-import { noData, error as errorResponse } from "../lib/response";
+import { Response, NextFunction } from "express";
+import { AuthRequest } from "./auth";
+import { query } from "../lib/db"; // ✅ gunakan named import
 
 /**
- * ensureProductOwnership
- * Expects req.params.id (product id) and req.user populated by requireAuth.
- * Attaches product row to req.product if ok.
+ * ownershipCheck helper - verifies resource owner or admin bypass
+ * - table: table name
+ * - idColumn: column name (default 'id')
+ * - ownerColumn: e.g., 'vendor_id' or 'user_id'
+ * - paramId: request param (default 'id')
  */
-export async function ensureProductOwnership(
-  req: Request & { user?: any; product?: any },
+export const ownershipCheck = async (
+  req: AuthRequest,
   res: Response,
-  next: NextFunction
-) {
-  const productId = Number(req.params.id);
-  if (!productId)
-    return errorResponse(res, 400, "Invalid product id", [
-      { message: "Invalid product id" },
-    ]);
-
+  table: string,
+  idColumn = "id",
+  ownerColumn = "user_id",
+  paramId = "id"
+): Promise<boolean> => {
   try {
-    const [rows]: any = await pool.query(
-      "SELECT id, vendor_id FROM products WHERE id = ? LIMIT 1",
-      [productId]
-    );
-    if (!rows.length) return noData(res, "Product not found");
-    const product = rows[0];
-    if (!req.user)
-      return errorResponse(res, 401, "Unauthorized", [
-        { message: "Unauthorized" },
-      ]);
-    if (product.vendor_id !== req.user.id) {
-      return errorResponse(res, 403, "Forbidden: not your product", [
-        { message: "Not product owner" },
-      ]);
+    const resourceId = req.params[paramId];
+    if (!resourceId) {
+      res.status(400).json({ error: "Missing resource id param" });
+      return false;
     }
-    req.product = product;
-    return next();
-  } catch (err) {
-    console.error("ensureProductOwnership error", err);
-    return errorResponse(res, 500, "Server error", [
-      { message: "Server error" },
-    ]);
+
+    // Admin bypass
+    const roles = (req.user && req.user.roles) || [];
+    if (roles.includes("admin")) return true;
+
+    // Fetch owner
+    const rows: any = await query(
+      `SELECT \`${ownerColumn}\` AS owner FROM \`${table}\` WHERE \`${idColumn}\` = ? LIMIT 1`,
+      [resourceId]
+    );
+    const row = rows[0];
+    if (!row) {
+      res.status(404).json({ error: "Resource not found" });
+      return false;
+    }
+
+    if (row.owner == null) {
+      res.status(403).json({ error: "Ownership cannot be verified" });
+      return false;
+    }
+
+    if (req.user.id !== row.owner) {
+      res.status(403).json({ error: "Forbidden: not resource owner" });
+      return false;
+    }
+
+    return true;
+  } catch (err: any) {
+    console.error("ownershipCheck error:", err.message || err);
+    res.status(500).json({ error: "Internal server error" });
+    return false;
   }
-}
+};

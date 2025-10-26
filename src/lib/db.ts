@@ -12,10 +12,20 @@ export const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
 });
+
 //helper to run single query
-export async function query(sql: string, params: any[] = []) {
+/**
+ * Generic query helper.
+ * Usage:
+ *   const rows = await query<UserRow>('SELECT id, name FROM users WHERE id = ?', [id]);
+ * Returns: Promise<T[]>
+ */
+export async function query<T = any>(
+  sql: string,
+  params: any[] = []
+): Promise<T[]> {
   //pool is connection
   //and query is method to run query
   const [rows] = await pool.query(sql, params);
-  return rows;
+  return rows as T[];
 }

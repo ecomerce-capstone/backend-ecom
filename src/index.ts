@@ -10,11 +10,14 @@ import paymentsRouter from "./routes/payments";
 import bannersRouter from "./routes/banners";
 import recomonddationRoutes from "./routes/recommendations";
 import cartRoutes from "./routes/cart";
+import "./lib/db"; //initialize db connection
+import { authenticate, authorizeRole } from "./middleware/auth";
 
 dotenv.config();
 const app = express();
 app.use(express.json()); //utk support json body
 //routes
+app.use(authenticate, authorizeRole("admin")); /// all admin children require admin
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/categories", categoriesRouter);
