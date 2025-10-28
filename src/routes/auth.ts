@@ -32,6 +32,14 @@ const handleValidation = <T = any>(
 };
 
 /** Register customer / user */
+/**
+ * Replace existing register handlers in src/routes/auth.ts with the following transactional versions.
+ * Assumes: pool, hashPassword, signAuthToken, success, errorResponse, handleValidation are imported/available.
+ */
+
+//
+// REGISTER CUSTOMER (transactional, assigns role via user_has_roles)
+//
 router.post(
   "/register",
   body("fullName").isLength({ min: 2 }),
@@ -41,8 +49,10 @@ router.post(
     if (!handleValidation(req, res)) return;
     const { fullName, email: rawEmail, password } = req.body;
     const email = String(rawEmail).toLowerCase();
+
+    let conn: any;
     try {
-      // check both users and vendors to avoid duplicate across tables
+      // Check duplicates first (users and vendors)
       const [uExisting]: any = await pool.query(
         "SELECT id FROM users WHERE email = ? LIMIT 1",
         [email]
@@ -57,24 +67,64 @@ router.post(
         ]);
       }
 
+      // Acquire connection and start transaction
+      conn = await pool.getConnection();
+      await conn.beginTransaction();
+
+      // Insert user
       const hashed = await hashPassword(password);
-      const [result]: any = await pool.query(
+      const [result]: any = await conn.query(
         "INSERT INTO users (full_name, email, password) VALUES (?, ?, ?)",
         [String(fullName).trim(), email, hashed]
       );
       const userId = result.insertId;
+
+      // Assign default role (customer) in user_has_roles
+      // role_id = 1 is assumed to be 'customer' (seed roles beforehand)
+      await conn.query(
+        "INSERT IGNORE INTO user_has_roles (user_id, role_id) VALUES (?, ?)",
+        [userId, 1]
+      );
+
+      // Commit transaction
+      await conn.commit();
+
+      // Sign token
       const token = signAuthToken({ id: userId, role: "customer", email });
+
       return success(res, { id: userId, token }, "Registered", 201);
     } catch (err) {
-      console.error("Register error", err);
+      console.error("Register error (transactional)", err);
+      if (conn) {
+        try {
+          await conn.rollback();
+        } catch (rbErr) {
+          console.error("Rollback error", rbErr);
+        }
+      }
+      // detect duplicate entry error (MySQL ER_DUP_ENTRY = 1062)
+      if (
+        (err as any)?.code === "ER_DUP_ENTRY" ||
+        (err as any)?.errno === 1062
+      ) {
+        return errorResponse(res, 409, "Email already registered", [
+          { field: "email", message: "Email already registered" },
+        ]);
+      }
       return errorResponse(res, 500, "Server error", [
         { message: "Server error" },
       ]);
+    } finally {
+      if (conn) conn.release();
     }
   }
 );
 
-/* register vendor */
+//
+// REGISTER VENDOR (transactional for vendor table only)
+// - vendors remain separate; no user_has_roles insertion here.
+// - we still check for duplicate email across users & vendors before insert.
+//
 router.post(
   "/register/vendor",
   body("name").isLength({ min: 2 }),
@@ -92,8 +142,10 @@ router.post(
       storeDescription,
     } = req.body;
     const email = String(rawEmail).toLowerCase();
+
+    let conn: any;
     try {
-      // check both tables to avoid duplicate
+      // Check duplicates across both tables
       const [uExisting]: any = await pool.query(
         "SELECT id FROM users WHERE email = ? LIMIT 1",
         [email]
@@ -108,9 +160,14 @@ router.post(
         ]);
       }
 
+      // transactionally insert vendor row
+      conn = await pool.getConnection();
+      await conn.beginTransaction();
+
       const hashed = await hashPassword(password);
-      const [result]: any = await pool.query(
-        "INSERT INTO vendors (name, email, password, phone, store_name, store_description) VALUES (?, ?, ?, ?, ?, ?)",
+      const [result]: any = await conn.query(
+        `INSERT INTO vendors (name, email, password, phone, store_name, store_description)
+         VALUES (?, ?, ?, ?, ?, ?)`,
         [
           String(name).trim(),
           email,
@@ -121,13 +178,37 @@ router.post(
         ]
       );
       const vendorId = result.insertId;
+
+      // (Optional) If you later want to maintain vendor->roles in pivot, insert here:
+      // await conn.query("INSERT IGNORE INTO user_has_roles (user_id, role_id) VALUES (?, ?)", [vendorId, 2]);
+
+      await conn.commit();
+
       const token = signAuthToken({ id: vendorId, role: "vendor", email });
+
       return success(res, { id: vendorId, token }, "Vendor Registered", 201);
     } catch (err) {
-      console.error("Vendor register error", err);
+      console.error("Vendor register error (transactional)", err);
+      if (conn) {
+        try {
+          await conn.rollback();
+        } catch (rbErr) {
+          console.error("Rollback error", rbErr);
+        }
+      }
+      if (
+        (err as any)?.code === "ER_DUP_ENTRY" ||
+        (err as any)?.errno === 1062
+      ) {
+        return errorResponse(res, 409, "Email already registered", [
+          { field: "email", message: "Email already registered" },
+        ]);
+      }
       return errorResponse(res, 500, "Server error", [
         { message: "Server error" },
       ]);
+    } finally {
+      if (conn) conn.release();
     }
   }
 );

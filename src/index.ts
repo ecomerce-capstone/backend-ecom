@@ -12,6 +12,7 @@ import recomonddationRoutes from "./routes/recommendations";
 import cartRoutes from "./routes/cart";
 import "./lib/db"; //initialize db connection
 import { authenticate, authorizeRole } from "./middleware/auth";
+import adminRouter from "./routes/admin";
 
 dotenv.config();
 const app = express();
@@ -29,12 +30,7 @@ app.use("/", paymentsRouter);
 app.use("/banners", bannersRouter);
 app.use("/recommendations", recomonddationRoutes);
 app.use("/cart", cartRoutes);
-app.use(
-  "/admin",
-  authenticate,
-  authorizeRole("admin"),
-  require("./routes/admin")
-); //admin route
+app.use("/admin", authenticate, authorizeRole("admin"), adminRouter); //admin route
 
 //health check
 app.get("/", (req, res) =>
